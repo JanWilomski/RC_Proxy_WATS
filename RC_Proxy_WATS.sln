@@ -1,0 +1,16 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RC_Proxy_WATS", "RC_Proxy_WATS\RC_Proxy_WATS.csproj", "{228402E7-52C1-4BDF-827D-B28C49741232}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{228402E7-52C1-4BDF-827D-B28C49741232}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{228402E7-52C1-4BDF-827D-B28C49741232}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{228402E7-52C1-4BDF-827D-B28C49741232}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{228402E7-52C1-4BDF-827D-B28C49741232}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
