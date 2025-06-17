@@ -1,10 +1,40 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<!-- RC_Proxy_WATS.csproj -->
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net8.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <AssemblyName>RC_Proxy_WATS</AssemblyName>
+        <RootNamespace>RC_Proxy_WATS</RootNamespace>
+        <AssemblyTitle>RC Proxy WATS</AssemblyTitle>
+        <AssemblyDescription>Proxy server for RC system with RabbitMQ CCG message caching</AssemblyDescription>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
     </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="8.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
+        <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
+        <PackageReference Include="System.Text.Json" Version="8.0.5" />
+        <PackageReference Include="System.ComponentModel.Annotations" Version="5.0.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="appsettings.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Update="appsettings.Development.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
 
 </Project>
