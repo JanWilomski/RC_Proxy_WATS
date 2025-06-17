@@ -167,38 +167,27 @@ namespace RC_Proxy_WATS.Models
         public Guid Id { get; set; } = Guid.NewGuid();
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
         public uint SequenceNumber { get; set; }
-        public byte[] CcgData { get; set; } = Array.Empty<byte>();
+        public byte[] RcMessageData { get; set; } = Array.Empty<byte>(); // Store entire RC message
         public string Session { get; set; } = string.Empty;
         
         public static StoredCcgMessage FromRcMessage(RcMessage rcMessage)
         {
-            var ccgBlock = rcMessage.Blocks.FirstOrDefault(b => 
-                b.Payload.Length > 0 && b.Payload[0] == (byte)'B');
-            
-            if (ccgBlock == null)
+            // Verify the message contains CCG data
+            if (!rcMessage.IsCcgMessage)
                 throw new ArgumentException("Message does not contain CCG data");
             
             return new StoredCcgMessage
             {
                 SequenceNumber = rcMessage.Header.SequenceNumber,
                 Session = rcMessage.Header.Session,
-                CcgData = ccgBlock.Payload
+                RcMessageData = rcMessage.ToBytes() // Store entire RC message as bytes
             };
         }
         
         public RcMessage ToRcMessage()
         {
-            var message = new RcMessage();
-            message.Header.Session = Session;
-            message.Header.SequenceNumber = SequenceNumber;
-            
-            var block = new RcMessageBlock();
-            block.Payload = CcgData;
-            block.Length = (ushort)CcgData.Length;
-            
-            message.Blocks.Add(block);
-            
-            return message;
+            // Reconstruct the original RC message from stored bytes
+            return RcMessage.FromBytes(RcMessageData);
         }
     }
 }

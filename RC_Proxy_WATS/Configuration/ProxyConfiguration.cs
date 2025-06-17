@@ -21,6 +21,8 @@ namespace RC_Proxy_WATS.Configuration
         
         public int ConnectionTimeoutSeconds { get; set; } = 60;
         
+        public int InitializationTimeoutMinutes { get; set; } = 5;
+        
         public bool EnableDebugLogging { get; set; } = false;
     }
 

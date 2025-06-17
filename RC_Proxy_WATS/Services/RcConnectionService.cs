@@ -9,12 +9,15 @@ namespace RC_Proxy_WATS.Services
     public interface IRcConnectionService : IDisposable
     {
         bool IsConnected { get; }
+        bool IsInitialized { get; }
         event Action<bool> ConnectionStatusChanged;
         event Action<RcMessage> MessageReceived;
+        event Action InitializationCompleted;
         Task ConnectAsync();
         Task DisconnectAsync();
         Task SendMessageAsync(RcMessage message);
         Task StartListeningAsync(CancellationToken cancellationToken);
+        Task InitializeWithRewindAsync();
     }
 
     public class RcConnectionService : IRcConnectionService
@@ -24,13 +27,17 @@ namespace RC_Proxy_WATS.Services
         private TcpClient? _client;
         private NetworkStream? _stream;
         private bool _isConnected;
+        private bool _isInitialized;
         private bool _disposed;
         private CancellationTokenSource? _listeningCancellation;
+        private TaskCompletionSource<bool>? _initializationCompletionSource;
 
         public bool IsConnected => _isConnected && _client?.Connected == true;
+        public bool IsInitialized => _isInitialized;
 
         public event Action<bool>? ConnectionStatusChanged;
         public event Action<RcMessage>? MessageReceived;
+        public event Action? InitializationCompleted;
 
         public RcConnectionService(IOptions<ProxyConfiguration> config, ILogger<RcConnectionService> logger)
         {
@@ -102,6 +109,77 @@ namespace RC_Proxy_WATS.Services
                 _stream = null;
                 _client = null;
             }
+        }
+
+        public async Task InitializeWithRewindAsync()
+        {
+            if (!IsConnected)
+                throw new InvalidOperationException("Must be connected to RC server before initialization");
+
+            if (_isInitialized)
+                return;
+
+            try
+            {
+                _logger.LogInformation("Starting RC server initialization with rewind...");
+
+                // Create completion source for initialization
+                _initializationCompletionSource = new TaskCompletionSource<bool>();
+
+                // Send rewind request to get all CCG messages
+                var rewindMessage = CreateRewindRequestMessage(0); // 0 = get all messages
+                await SendMessageAsync(rewindMessage);
+
+                _logger.LogInformation("Sent rewind request to RC server, waiting for historical data...");
+
+                // Wait for initialization to complete (with timeout)
+                var initializationTask = _initializationCompletionSource.Task;
+                var timeoutTask = Task.Delay(TimeSpan.FromMinutes(_config.InitializationTimeoutMinutes));
+
+                var completedTask = await Task.WhenAny(initializationTask, timeoutTask);
+
+                if (completedTask == timeoutTask)
+                {
+                    throw new TimeoutException($"RC server initialization timed out after {_config.InitializationTimeoutMinutes} minutes");
+                }
+
+                if (await initializationTask)
+                {
+                    _isInitialized = true;
+                    _logger.LogInformation("RC server initialization completed successfully");
+                    InitializationCompleted?.Invoke();
+                }
+                else
+                {
+                    throw new InvalidOperationException("RC server initialization failed");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to initialize RC server connection");
+                throw;
+            }
+            finally
+            {
+                _initializationCompletionSource = null;
+            }
+        }
+
+        private RcMessage CreateRewindRequestMessage(uint lastSeenSequence)
+        {
+            var message = new RcMessage();
+            message.Header.Session = "PROXY";
+            message.Header.SequenceNumber = 0; // Control message
+
+            var block = new RcMessageBlock();
+            block.Payload = new byte[5]; // 'R' + 4 bytes for sequence number
+            block.Payload[0] = (byte)'R';
+            BitConverter.GetBytes(lastSeenSequence).CopyTo(block.Payload, 1);
+            block.Length = 5;
+
+            message.Blocks.Add(block);
+
+            return message;
         }
 
         public async Task SendMessageAsync(RcMessage message)
@@ -269,6 +347,16 @@ namespace RC_Proxy_WATS.Services
                     
                     var message = RcMessage.FromBytes(messageData);
                     
+                    // Check if this is a rewind complete message during initialization
+                    if (!_isInitialized && _initializationCompletionSource != null)
+                    {
+                        if (IsRewindCompleteMessage(message))
+                        {
+                            _logger.LogInformation("Received rewind complete message from RC server");
+                            _initializationCompletionSource.SetResult(true);
+                        }
+                    }
+                    
                     if (_config.EnableDebugLogging)
                     {
                         _logger.LogTrace("Received message from RC server. Session: {Session}, Sequence: {Sequence}, Blocks: {BlockCount}",
@@ -286,6 +374,13 @@ namespace RC_Proxy_WATS.Services
             }
         }
 
+        private bool IsRewindCompleteMessage(RcMessage message)
+        {
+            return message.Blocks.Any(b => 
+                b.Payload.Length > 0 && 
+                b.Payload[0] == (byte)'r'); // Rewind complete message
+        }
+
         public void Dispose()
         {
             if (_disposed)
@@ -293,6 +388,9 @@ namespace RC_Proxy_WATS.Services
 
             try
             {
+                // Cancel initialization if in progress
+                _initializationCompletionSource?.SetResult(false);
+                
                 _listeningCancellation?.Cancel();
                 DisconnectAsync().Wait(TimeSpan.FromSeconds(5));
             }
@@ -303,6 +401,7 @@ namespace RC_Proxy_WATS.Services
             finally
             {
                 _listeningCancellation?.Dispose();
+                _initializationCompletionSource = null;
                 _stream?.Dispose();
                 _client?.Dispose();
                 _disposed = true;

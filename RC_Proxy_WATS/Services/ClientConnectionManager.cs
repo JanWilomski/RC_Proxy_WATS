@@ -162,11 +162,19 @@ namespace RC_Proxy_WATS.Services
                 _logger.LogInformation("Sending {Count} CCG messages to client {ClientId} for rewind",
                     ccgMessages.Count, clientId);
 
-                // Send each CCG message as a separate RC message
+                // Send each CCG message as the original RC message
+                int messagesSent = 0;
                 foreach (var ccgMessage in ccgMessages)
                 {
                     var rcMessage = ccgMessage.ToRcMessage();
                     await client.SendMessageAsync(rcMessage);
+                    messagesSent++;
+                    
+                    if (messagesSent % 100 == 0) // Log progress every 100 messages
+                    {
+                        _logger.LogDebug("Sent {MessagesSent}/{TotalMessages} rewind messages to client {ClientId}", 
+                            messagesSent, ccgMessages.Count, clientId);
+                    }
                 }
 
                 // Send rewind complete message
@@ -181,7 +189,8 @@ namespace RC_Proxy_WATS.Services
 
                 await client.SendMessageAsync(rewindCompleteMessage);
 
-                _logger.LogInformation("Completed rewind response for client {ClientId}", clientId);
+                _logger.LogInformation("Completed rewind response for client {ClientId}. Sent {MessagesSent} messages", 
+                    clientId, messagesSent);
             }
             catch (Exception ex)
             {

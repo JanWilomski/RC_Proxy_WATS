@@ -11,6 +11,7 @@ namespace RC_Proxy_WATS.Services
         private readonly IRabbitMqService _rabbitMqService;
         private readonly ICcgMessageStore _ccgMessageStore;
         private readonly ILogger<ProxyService> _logger;
+        private volatile int _initializationCcgMessageCount = 0;
 
         public ProxyService(
             IRcConnectionService rcConnection,
@@ -47,12 +48,18 @@ namespace RC_Proxy_WATS.Services
                 await _rcConnection.ConnectAsync();
                 _logger.LogInformation("Connected to RC server successfully");
 
-                // Start tasks concurrently
+                // Start RC listening task
                 var rcListeningTask = _rcConnection.StartListeningAsync(stoppingToken);
+
+                // Initialize RC connection with rewind (get historical CCG messages)
+                await _rcConnection.InitializeWithRewindAsync();
+                _logger.LogInformation("RC server initialization with rewind completed");
+
+                // Now start accepting client connections
                 var clientListeningTask = _clientManager.StartListeningAsync(stoppingToken);
                 var maintenanceTask = StartMaintenanceTaskAsync(stoppingToken);
 
-                _logger.LogInformation("RC_Proxy_WATS service started successfully");
+                _logger.LogInformation("RC_Proxy_WATS service started successfully and ready for client connections");
 
                 // Wait for any task to complete (which would indicate an error or shutdown)
                 await Task.WhenAny(rcListeningTask, clientListeningTask, maintenanceTask);
@@ -77,8 +84,19 @@ namespace RC_Proxy_WATS.Services
             // Handle messages from RC server
             _rcConnection.MessageReceived += OnRcMessageReceived;
 
+            // Handle RC initialization completion
+            _rcConnection.InitializationCompleted += OnRcInitializationCompleted;
+
             // Handle messages from clients
             _clientManager.ClientMessageReceived += OnClientMessageReceived;
+        }
+
+        private void OnRcInitializationCompleted()
+        {
+            _logger.LogInformation("RC server initialization completed - loaded {Count} historical CCG messages", 
+                _initializationCcgMessageCount);
+            _logger.LogInformation("Proxy is now ready to serve clients with {TotalStored} total CCG messages in store", 
+                _ccgMessageStore.MessageCount);
         }
 
         private void OnRcConnectionStatusChanged(bool isConnected)
@@ -98,19 +116,43 @@ namespace RC_Proxy_WATS.Services
         {
             try
             {
-                // Check if this is a CCG message (type 'B')
+                // Always store CCG messages, even during initialization
                 if (message.IsCcgMessage)
                 {
+                    if (!_rcConnection.IsInitialized)
+                    {
+                        _logger.LogDebug("Received historical CCG message during initialization. Session: {Session}, Sequence: {Sequence}, Blocks: {BlockCount}",
+                            message.Header.Session, message.Header.SequenceNumber, message.Header.BlockCount);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Received new CCG message from RC. Session: {Session}, Sequence: {Sequence}, Blocks: {BlockCount}",
+                            message.Header.Session, message.Header.SequenceNumber, message.Header.BlockCount);
+                    }
+                    
+                    // Log block types for debugging
+                    if (_logger.IsEnabled(LogLevel.Trace))
+                    {
+                        var blockTypes = message.Blocks
+                            .Where(b => b.Payload.Length > 0)
+                            .Select(b => (char)b.Payload[0])
+                            .ToArray();
+                        _logger.LogTrace("CCG message block types: [{BlockTypes}]", string.Join(", ", blockTypes));
+                    }
+                    
                     await HandleCcgMessageFromRc(message);
                 }
 
-                // Forward all messages to clients (including CCG messages)
-                await _clientManager.SendMessageToAllClientsAsync(message);
-
-                if (_logger.IsEnabled(LogLevel.Trace))
+                // Only forward messages to clients after initialization is complete
+                if (_rcConnection.IsInitialized)
                 {
-                    _logger.LogTrace("Forwarded RC message to {ClientCount} clients. Session: {Session}, Sequence: {Sequence}",
-                        _clientManager.ConnectedClientsCount, message.Header.Session, message.Header.SequenceNumber);
+                    await _clientManager.SendMessageToAllClientsAsync(message);
+
+                    if (_logger.IsEnabled(LogLevel.Trace))
+                    {
+                        _logger.LogTrace("Forwarded RC message to {ClientCount} clients. Session: {Session}, Sequence: {Sequence}",
+                            _clientManager.ConnectedClientsCount, message.Header.Session, message.Header.SequenceNumber);
+                    }
                 }
             }
             catch (Exception ex)
@@ -127,14 +169,25 @@ namespace RC_Proxy_WATS.Services
                 var storedMessage = StoredCcgMessage.FromRcMessage(message);
                 await _ccgMessageStore.AddCcgMessageAsync(storedMessage);
 
-                _logger.LogDebug("Stored CCG message. Sequence: {Sequence}, Total stored: {TotalCount}",
+                // Track initialization progress
+                if (!_rcConnection.IsInitialized)
+                {
+                    _initializationCcgMessageCount++;
+                    if (_initializationCcgMessageCount % 100 == 0) // Log every 100 messages
+                    {
+                        _logger.LogInformation("Initialization progress: {Count} historical CCG messages processed", 
+                            _initializationCcgMessageCount);
+                    }
+                }
+
+                _logger.LogTrace("Stored CCG message. Sequence: {Sequence}, Total stored: {TotalCount}",
                     storedMessage.SequenceNumber, _ccgMessageStore.MessageCount);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to store CCG message. Sequence: {Sequence}",
                     message.Header.SequenceNumber);
-                // Don't throw - we should still forward the message to clients
+                // Don't throw - we should still continue processing
             }
         }
 
@@ -191,6 +244,14 @@ namespace RC_Proxy_WATS.Services
 
                 _logger.LogInformation("Sending {Count} CCG messages to client {ClientId} for rewind (from sequence {LastSeen})",
                     ccgMessages.Count, clientId, lastSeenSequence);
+
+                // Debug: Log sequence numbers of messages being sent
+                if (_logger.IsEnabled(LogLevel.Debug) && ccgMessages.Count > 0)
+                {
+                    var sequenceRange = ccgMessages.Count > 0 ? 
+                        $"{ccgMessages.Min(m => m.SequenceNumber)}-{ccgMessages.Max(m => m.SequenceNumber)}" : "none";
+                    _logger.LogDebug("Rewind sequence range: {SequenceRange}", sequenceRange);
+                }
 
                 // Send the messages to the client
                 await _clientManager.SendRewindResponseToClientAsync(clientId, ccgMessages);

@@ -115,7 +115,7 @@ namespace RC_Proxy_WATS.Services
                 {
                     {"sequence_number", message.SequenceNumber},
                     {"session", message.Session},
-                    {"ccg_data_length", message.CcgData.Length}
+                    {"rc_message_length", message.RcMessageData.Length}
                 };
 
                 _channel.BasicPublish(
